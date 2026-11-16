@@ -1,5 +1,7 @@
 # Exotics Café Discord sign-in
 
+[Complete project setup and operations cheatsheet](https://github.com/cristiancringasu/exoah-api/blob/main/CHEATSHEET.md) — available to the private API repository's collaborators. It covers all four projects, configuration, deployment, backups and useful commands. Credentials stay outside Git.
+
 Node 24 Discord bot and private HTTP OTP verifier. Codes are cryptographically generated, hashed in memory, expire, have a bounded attempt count, and can be used once. A process restart invalidates outstanding codes.
 
 Run `npm ci`, copy `.env.example` to `.env`, and fill the bot token, application ID and a random shared secret of at least 32 characters. The API's `DISCORD_SHARED_SECRET` must match. Keep the populated file private.
