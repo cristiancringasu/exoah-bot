@@ -66,7 +66,7 @@ export async function start() {
       const code = generateOtp(interaction.user.id, ttl, maxAttempts);
       try {
         await interaction.user.send(
-          `Your Exoah sign-in code is: ${code}. Discord username: @${interaction.user.username}. User ID: ${interaction.user.id}. It expires in ${Math.round(ttl / 60)} minutes and can be used once. Never share it.`,
+          `Your Exoah sign-in code is: ${code}. It expires in ${Math.round(ttl / 60)} minutes and can be used once. Never share it.\n\nDiscord username: @${interaction.user.username}\nDiscord user ID: ${interaction.user.id}`,
         );
       } catch {
         invalidateOtp(interaction.user.id);
