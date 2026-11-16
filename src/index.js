@@ -26,7 +26,29 @@ export async function start() {
   )
     throw new Error("Invalid OTP expiry or attempt limit");
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const profiles = new Map();
   const app = createApp({
+    lookup: async (userId) => {
+      const cached = profiles.get(userId);
+      if (cached && cached.expires > Date.now()) return cached.value;
+      const user = await client.users.fetch(userId, {
+        force: true,
+        cache: false,
+      });
+      if (!user || user.bot) return null;
+      const value = {
+        id: user.id,
+        username:
+          user.discriminator && user.discriminator !== "0"
+            ? `${user.username}#${user.discriminator}`
+            : user.username,
+        displayName: user.globalName || user.username,
+        avatarUrl: user.displayAvatarURL({ extension: "png", size: 128 }),
+      };
+      if (profiles.size >= 5000) profiles.delete(profiles.keys().next().value);
+      profiles.set(userId, { value, expires: Date.now() + 600000 });
+      return value;
+    },
     sharedSecret: SHARED_SECRET,
     ready: () => client.isReady(),
   });
@@ -44,7 +66,7 @@ export async function start() {
       const code = generateOtp(interaction.user.id, ttl, maxAttempts);
       try {
         await interaction.user.send(
-          `Your Exoah sign-in code is: ${code}. It expires in ${Math.round(ttl / 60)} minutes and can be used once. Never share it.`,
+          `Your Exoah sign-in code is: ${code}. It expires in ${Math.round(ttl / 60)} minutes and can be used once. Never share it.\n\nDiscord username: @${interaction.user.username}\nDiscord user ID: ${interaction.user.id}`,
         );
       } catch {
         invalidateOtp(interaction.user.id);
