@@ -1,85 +1,96 @@
-import 'dotenv/config';
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import express from 'express';
-import { generateOtp, validateOtp, getStatus } from './otpStore.js';
-
-const {
-  DISCORD_TOKEN,
-  CLIENT_ID,
-  GUILD_ID,
-  PORT = 3020,
-  OTP_TTL_SECONDS = 300,
-  MAX_INVALID_ATTEMPTS = 3,
-  SHARED_SECRET
-} = process.env;
-
-if (!DISCORD_TOKEN || !CLIENT_ID || !SHARED_SECRET) {
-  console.error('Missing required environment variables.');
-  process.exit(1);
-}
-
-const app = express();
-app.use(express.json());
-
-// Endpoint for API server to validate an OTP
-app.post('/verify-otp', (req, res) => {
-  const { userId, code, secret } = req.body;
-  if (secret !== SHARED_SECRET) return res.status(403).json({ ok: false, error: 'forbidden' });
-  const result = validateOtp(userId, code);
-  return res.json(result);
-});
-
-// (Optional) endpoint to fetch status (for debugging)
-app.get('/otp-status/:userId', (req, res) => {
-  const { userId } = req.params;
-  const status = getStatus(userId);
-  if (!status) return res.status(404).json({ ok: false });
-  res.json(status);
-});
-
-app.listen(PORT, () => console.log(`Discord OTP service listening on :${PORT}`));
-
-// Discord bot setup
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessages] });
-
-const commands = [
-  new SlashCommandBuilder()
-    .setName('otp')
-    .setDescription('Generate a one-time login code (sent via DM).'),
-];
-
-async function registerCommands() {
-  const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-  try {
-    if (GUILD_ID) {
-      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-      console.log('Registered guild commands');
-    } else {
-      await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-      console.log('Registered global commands');
-    }
-  } catch (e) {
-    console.error('Failed to register commands', e);
-  }
-}
-
-client.on('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
-});
-
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName === 'otp') {
-    await interaction.deferReply({ ephemeral: true });
+import "dotenv/config";
+import { Client, GatewayIntentBits, Events } from "discord.js";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { createApp } from "./app.js";
+import { generateOtp, invalidateOtp } from "./otpStore.js";
+export async function start() {
+  const {
+    DISCORD_TOKEN,
+    SHARED_SECRET,
+    PORT = "3020",
+    HOST = "127.0.0.1",
+    OTP_TTL_SECONDS = "300",
+    MAX_INVALID_ATTEMPTS = "3",
+  } = process.env;
+  if (!DISCORD_TOKEN) throw new Error("DISCORD_TOKEN is required");
+  const ttl = Number(OTP_TTL_SECONDS);
+  const maxAttempts = Number(MAX_INVALID_ATTEMPTS);
+  if (
+    !Number.isInteger(ttl) ||
+    ttl < 30 ||
+    ttl > 900 ||
+    !Number.isInteger(maxAttempts) ||
+    maxAttempts < 1 ||
+    maxAttempts > 10
+  )
+    throw new Error("Invalid OTP expiry or attempt limit");
+  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const app = createApp({
+    sharedSecret: SHARED_SECRET,
+    ready: () => client.isReady(),
+  });
+  client.once(Events.ClientReady, () =>
+    console.log("Discord OTP bot connected"),
+  );
+  client.on(Events.Error, (error) =>
+    console.error("Discord client error:", error.name),
+  );
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand() || interaction.commandName !== "otp")
+      return;
     try {
-      const code = generateOtp(interaction.user.id, Number(OTP_TTL_SECONDS), Number(MAX_INVALID_ATTEMPTS));
-      await interaction.user.send(`Your login code is: ${code} (valid for ${OTP_TTL_SECONDS} seconds)`);
-      await interaction.editReply('A code has been sent to your DMs.');
-    } catch (e) {
-      await interaction.editReply('Unable to send you a DM. Please enable DMs and try again.');
+      await interaction.deferReply({ flags: 64 });
+      const code = generateOtp(interaction.user.id, ttl, maxAttempts);
+      try {
+        await interaction.user.send(
+          `Your Exoah sign-in code is: ${code}. It expires in ${Math.round(ttl / 60)} minutes and can be used once. Never share it.`,
+        );
+      } catch {
+        invalidateOtp(interaction.user.id);
+        throw new Error(
+          "Enable direct messages from this server and request a new code.",
+        );
+      }
+      await interaction.editReply(
+        "A sign-in code has been sent to your direct messages.",
+      );
+    } catch (error) {
+      const message =
+        error.message.includes("30 seconds") ||
+        error.message.startsWith("Enable direct")
+          ? error.message
+          : "A code could not be sent. Please try again shortly.";
+      if (interaction.deferred)
+        await interaction.editReply(message).catch(() => {});
+      else
+        await interaction
+          .reply({ content: message, flags: 64 })
+          .catch(() => {});
     }
-  }
-});
-
-registerCommands();
-client.login(DISCORD_TOKEN);
+  });
+  await client.login(DISCORD_TOKEN);
+  const server = app.listen(Number(PORT), HOST, () =>
+    console.log(`OTP service listening on ${HOST}:${PORT}`),
+  );
+  const shutdown = () => {
+    client.destroy();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10000).unref();
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+  return { client, server };
+}
+if (
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+)
+  start().catch((error) => {
+    console.error(
+      "Bot startup failed:",
+      error.name,
+      "Check the bot environment.",
+    );
+    process.exit(1);
+  });
