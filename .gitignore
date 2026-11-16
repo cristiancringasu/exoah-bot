@@ -1,7 +1,14 @@
 node_modules/
 .env
 .env.*
+*.env
 !.env.example
+private-access/
+*.pem
+*.key
+*.sql
+*.sql.gz
+*.tar.gz
 coverage/
 *.log
 .DS_Store
