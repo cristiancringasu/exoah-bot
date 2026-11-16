@@ -86,3 +86,47 @@ test("a disconnected bot fails closed and readiness reports its state", async ()
     503,
   );
 });
+test("profile lookup requires the private secret and exposes only public profile fields", async () => {
+  let calls = 0;
+  const app = createApp({
+    sharedSecret: secret,
+    lookup: async (id) => {
+      calls++;
+      return {
+        id,
+        username: "seller",
+        displayName: "Seller",
+        avatarUrl: "https://cdn.discordapp.com/avatar.png",
+        email: "private@example.test",
+      };
+    },
+  });
+  assert.equal(
+    (await request(app).post("/lookup-user").send({ userId: user })).status,
+    403,
+  );
+  assert.equal(calls, 0);
+  assert.equal(
+    (
+      await request(app)
+        .post("/lookup-user")
+        .send({ userId: "../private", secret })
+    ).status,
+    400,
+  );
+  const response = await request(app)
+    .post("/lookup-user")
+    .send({ userId: user, secret });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.id, user);
+  assert.equal(response.body.email, undefined);
+  const disconnected = createApp({ sharedSecret: secret, ready: () => false });
+  assert.equal(
+    (
+      await request(disconnected)
+        .post("/lookup-user")
+        .send({ userId: user, secret })
+    ).status,
+    503,
+  );
+});

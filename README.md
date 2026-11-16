@@ -9,3 +9,9 @@ Run `npm ci`, copy `.env.example` to `.env`, and fill the bot token, application
 The verification endpoint must remain private, accessible only to the API. `/health/ready` succeeds only after Discord connects. See the API repository's `deploy/README.md` for the shared Docker Compose deployment.
 
 `npm test` runs offline expiry, replay, attempt-limit, cooldown and HTTP authorization tests without contacting Discord. `npm run format:check` and `npm audit --audit-level=moderate` run the remaining checks. A production smoke test with a real Discord account is still required after deployment.
+
+## Private profile lookup
+
+`POST /lookup-user` uses the same private shared secret as the OTP verifier, validates the Discord ID, and returns only the ID, username, display name and avatar URL. The API restricts requests to existing site accounts. The bot's bounded ten-minute cache limits Discord requests; this feature needs no privileged gateway intent. User email, messages, membership and roles are not returned.
+
+The `/otp` message also includes the requesting user's Discord username and numeric ID to make registration easier. It is still generated only when that user invokes the command.
